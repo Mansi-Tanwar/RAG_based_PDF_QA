@@ -1,7 +1,16 @@
 # chatbot_ui.py
 
 import streamlit as st
-from app import auto_extract_filters_from_query, get_top_chunks, get_gemini_answer
+
+from app import (
+    auto_extract_filters_from_query,
+    get_top_chunks,
+    get_gemini_answer,
+    build_index_from_pdfs
+)
+
+# ✅ This initializes the FAISS index and loads PDF data
+build_index_from_pdfs()
 
 st.set_page_config(page_title="🎓 Placement Chatbot", layout="centered")
 
