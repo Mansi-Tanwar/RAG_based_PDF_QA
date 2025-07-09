@@ -22,10 +22,9 @@ except KeyError:
 gemini_model = genai.GenerativeModel('models/gemini-2.5-flash')
 
 # ✅ Ensure NLTK punkt tokenizer is available
-NLTK_DATA_PATH = "/tmp/nltk_data"
-os.makedirs(NLTK_DATA_PATH, exist_ok=True)
-nltk.download('punkt', download_dir=NLTK_DATA_PATH)
-nltk.data.path.append(NLTK_DATA_PATH)
+import nltk
+nltk.download('punkt')
+nltk.download('punkt_tab')
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
