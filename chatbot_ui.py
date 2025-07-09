@@ -5,7 +5,8 @@ from app import (
     parse_year_metrics,
     extract_chunks_from_pdf,
     create_faiss_index,
-    answer_question
+    answer_question,
+    get_top_chunks  # ✅ Make sure it's imported
 )
 
 import os
@@ -52,14 +53,15 @@ if query:
             year_filter, dept_filter = auto_extract_filters_from_query(query)
             st.markdown(f"🔍 **Filters applied** → Year: `{year_filter}`, Department: `{dept_filter}`")
 
-            top_chunks = get_top_chunks(query, year_filter=year_filter, dept_filter=dept_filter, k=20)
+            # ✅ Corrected call to get_top_chunks
+            context = get_top_chunks(query, faiss_index, chunk_texts, embeddings, top_k=20)
 
-            if not top_chunks:
-                context = "\n".join(chunk_texts[:20])  # fallback: give first 20 chunks
+            # ✅ If get_top_chunks returned empty context
+            if not context.strip():
+                response = "⚠️ I couldn't find enough context to answer that question."
             else:
-                context = "\n".join([chunk["text"] for chunk in top_chunks])
+                response = answer_question(query, faiss_index, chunk_texts, embeddings, year_metrics)
 
-            response = get_gemini_answer(query, top_chunks) if top_chunks else "⚠️ No relevant chunks found."
         except Exception as e:
             response = f"❌ Error: {e}"
 
