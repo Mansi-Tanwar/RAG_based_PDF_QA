@@ -24,11 +24,15 @@ except KeyError:
 
 gemini_model = genai.GenerativeModel('models/gemini-2.5-flash')
 
-# ✅ Ensure nltk punkt tokenizer is available
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
+# ✅ Ensure NLTK punkt tokenizer is available in all environments
+import nltk
+import os
+
+NLTK_DATA_PATH = "/tmp/nltk_data"
+os.makedirs(NLTK_DATA_PATH, exist_ok=True)
+nltk.download('punkt', download_dir=NLTK_DATA_PATH)
+nltk.data.path.append(NLTK_DATA_PATH)
+
 
 # ✅ Global variables
 model = SentenceTransformer("all-MiniLM-L6-v2")
