@@ -1,13 +1,13 @@
 import streamlit as st
 from app import (
     auto_extract_filters_from_query,
-    get_top_chunks,
-    get_gemini_answer,
     build_raw_text_map,
     parse_year_metrics,
     extract_chunks_from_pdf,
-    create_faiss_index
+    create_faiss_index,
+    answer_question
 )
+
 import os
 import re
 
