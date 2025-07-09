@@ -212,6 +212,20 @@ def build_and_run(pdf_folder_path):
         print("🧠 Answer:", answer_question(q, index, chunk_texts, embs, metrics))
         print()
 
+def auto_extract_filters_from_query(query):
+    year_match = re.search(r'20\d{2}', query)
+    year = year_match.group(0) if year_match else "All"
+
+    departments = ['CSE', 'ECE', 'IT', 'MCA', 'MAE', 'AIDS', 'VLSI', 'BBA', 'MBA']
+    dept = "All"
+    for d in departments:
+        if d in query.upper():
+            dept = d
+            break
+
+    return year, dept
+
+
 # ✅ Local script execution (for CLI testing)
 if __name__ == "__main__":
     build_and_run("./Placement Data")
