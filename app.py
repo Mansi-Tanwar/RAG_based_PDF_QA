@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 # ✅ Load environment variables
 load_dotenv()
 
-# ✅ Configure Gemini API key securely
 try:
     genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 except KeyError:
@@ -28,13 +27,8 @@ os.makedirs(NLTK_DATA_PATH, exist_ok=True)
 nltk.download('punkt', download_dir=NLTK_DATA_PATH)
 nltk.data.path.append(NLTK_DATA_PATH)
 
-# ✅ Global variables
 model = SentenceTransformer("all-MiniLM-L6-v2")
-all_chunks = []
-metadata_list = []
-faiss_index = None
 
-# ✅ Embed using Gemini
 def embed_text(texts):
     if not isinstance(texts, list):
         texts = [texts]
@@ -51,7 +45,6 @@ def embed_text(texts):
         embeddings = [embeddings]
     return np.array(embeddings)
 
-# ✅ Extract chunks from a single PDF
 def extract_chunks_from_pdf(pdf_path, year, max_tokens=200):
     chunks = []
     try:
@@ -84,7 +77,6 @@ def extract_chunks_from_pdf(pdf_path, year, max_tokens=200):
         print(f"Error processing PDF {pdf_path}: {e}")
     return chunks
 
-# ✅ Get raw text from PDFs for year-based metric extraction
 def build_raw_text_map(pdf_folder):
     raw_map = {}
     for fname in os.listdir(pdf_folder):
@@ -112,7 +104,6 @@ def build_raw_text_map(pdf_folder):
             print(f"Error reading {fname}: {e}")
     return raw_map
 
-# ✅ Parse placement metrics
 def parse_year_metrics(raw_text_by_year):
     metrics = collections.defaultdict(dict)
     for year, text in raw_text_by_year.items():
@@ -120,13 +111,14 @@ def parse_year_metrics(raw_text_by_year):
         avg = re.search(r'Average(?: Salary| CTC)?.*?(\d+\.?\d*)', cleaned_text, re.IGNORECASE)
         high = re.search(r'Highest(?: Salary| CTC)?.*?(\d+\.?\d*)', cleaned_text, re.IGNORECASE)
         recs = re.search(r'(?:companies|recruiters).{0,20}(\d{2,4})', cleaned_text, re.IGNORECASE)
+        placed = re.search(r'(\d{2,4}) students? got placed', cleaned_text, re.IGNORECASE)
 
         metrics[year]['average_salary'] = float(avg.group(1)) if avg else None
         metrics[year]['highest_salary'] = float(high.group(1)) if high else None
         metrics[year]['companies_visited'] = int(recs.group(1)) if recs else None
+        metrics[year]['students_placed'] = int(placed.group(1)) if placed else None
     return metrics
 
-# ✅ Build FAISS index
 def create_faiss_index(chunks):
     embeddings = embed_text(chunks)
     if embeddings.size == 0:
@@ -136,7 +128,6 @@ def create_faiss_index(chunks):
     index.add(embeddings)
     return index, chunks, embeddings
 
-# ✅ Retrieve top relevant chunks
 def retrieve_chunks(query, index, chunks, embeddings, top_k=20):
     query_emb = embed_text(query)
     if query_emb.size == 0 or index is None:
@@ -147,11 +138,9 @@ def retrieve_chunks(query, index, chunks, embeddings, top_k=20):
     valid = [i for i in I[0] if i != -1 and i < len(chunks)]
     return "\n".join([chunks[i] for i in valid])
 
-# ✅ Alias for compatibility (to fix `get_top_chunks` error)
 def get_top_chunks(query, index, chunks, embeddings, top_k=20):
     return retrieve_chunks(query, index, chunks, embeddings, top_k)
 
-# ✅ Ask Gemini
 def ask_gemini(question, context):
     if not context.strip():
         return "⚠️ I couldn't find enough context to answer that question."
@@ -168,7 +157,6 @@ Answer:"""
         print(f"Gemini error: {e}")
         return "❌ Gemini API error."
 
-# ✅ Hybrid QA logic
 def answer_question(query, index, chunks, embeddings, year_metrics):
     query_lower = query.lower()
     m_year = re.search(r"\b(20\d{2})\b", query_lower)
@@ -176,6 +164,8 @@ def answer_question(query, index, chunks, embeddings, year_metrics):
 
     if year and year in year_metrics:
         m = year_metrics[year]
+        if "how many" in query_lower and "placed" in query_lower and m.get("students_placed"):
+            return f"{m['students_placed']} students got placed in {year}."
         if "average" in query_lower and "salary" in query_lower and m.get("average_salary"):
             return f"The average salary in {year} was {m['average_salary']} LPA."
         if "highest" in query_lower and "salary" in query_lower and m.get("highest_salary"):
@@ -185,34 +175,6 @@ def answer_question(query, index, chunks, embeddings, year_metrics):
 
     context = retrieve_chunks(query, index, chunks, embeddings)
     return ask_gemini(query, context)
-
-# ✅ Entry point
-def build_and_run(pdf_folder_path):
-    print(f"📁 Reading from: {pdf_folder_path}")
-    raw_text_map = build_raw_text_map(pdf_folder_path)
-    metrics = parse_year_metrics(raw_text_map)
-
-    all_chunks = []
-    for fname in os.listdir(pdf_folder_path):
-        if not fname.lower().endswith(".pdf"):
-            continue
-        match = re.search(r'(\d{4})', fname)
-        year = match.group(1) if match else None
-        if year:
-            print(f"→ Processing {fname}")
-            all_chunks.extend(extract_chunks_from_pdf(os.path.join(pdf_folder_path, fname), year))
-
-    index, chunk_texts, embs = create_faiss_index(all_chunks)
-    if not chunk_texts:
-        print("❌ No chunks created.")
-        return
-
-    while True:
-        q = input("❓ Ask a question (or type 'exit'): ").strip()
-        if q.lower() == "exit":
-            break
-        print("🧠 Answer:", answer_question(q, index, chunk_texts, embs, metrics))
-        print()
 
 def auto_extract_filters_from_query(query):
     year_match = re.search(r'20\d{2}', query)
@@ -227,6 +189,5 @@ def auto_extract_filters_from_query(query):
 
     return year, dept
 
-# ✅ Local script execution
 if __name__ == "__main__":
-    build_and_run("./Placement Data")
+    print("📁 Running from CLI. Not intended for Streamlit.")
