@@ -8,6 +8,10 @@ import numpy as np
 import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
 
+# ✅ Load .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # ✅ Load Gemini API key from environment variable
 try:
     genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
