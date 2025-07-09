@@ -1,109 +1,206 @@
-import streamlit as st
+# app.py
+
+import os
+import re
 import fitz  # PyMuPDF
-from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 import google.generativeai as genai
-import tempfile
-import traceback
+from sentence_transformers import SentenceTransformer
 
-# 🎯 Page config
-st.set_page_config(page_title="📄 RAG PDF Q&A Chat", layout="centered")
-
-# 🎉 Title
-st.title("📄 PDF Chat using RAG + Gemini Flash 2.5")
-st.markdown("Upload a PDF and chat with it using Gemini and RAG!")
-
-# 📌 Gemini API key
+# ✅ Load Gemini API key from environment variable
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    gemini_model = genai.GenerativeModel('models/gemini-2.5-flash')
-except Exception as e:
-    st.error("❌ Gemini API key missing or invalid. Please check your Streamlit secrets.")
-    st.stop()
+    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+except KeyError:
+    print("❌ Error: GOOGLE_API_KEY not set in environment.")
+    exit()
 
-# 🧠 Load embedding model
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+# ✅ Gemini Model
+gemini_model = genai.GenerativeModel('models/gemini-2.5-flash')
 
-# 📎 PDF upload
-uploaded_file = st.file_uploader("📎 Upload your PDF", type=["pdf"])
+# ✅ Model & storage
+model = SentenceTransformer("all-MiniLM-L6-v2")
+all_chunks = []
+metadata_list = []
 
-# 🧠 Session states for chat history
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+# ✅ Extract PDF text
+def extract_text_chunks(pdf_file_path, max_len=300):
+    doc = fitz.open(pdf_file_path)
+    chunks = []
 
-if "chunks" not in st.session_state:
-    st.session_state.chunks = None
+    for page in doc:
+        text = page.get_text()
+        paragraphs = text.split('\n\n')
+        for para in paragraphs:
+            para = para.strip()
+            if len(para) > 50:
+                chunks.append(para[:max_len])
+    doc.close()
+    return chunks
 
-if "index" not in st.session_state:
-    st.session_state.index = None
+# ✅ Metadata extractors
+def extract_year_from_filename(name):
+    match = re.search(r'20\d{2}', name)
+    return match.group(0) if match else "Unknown"
 
-# 🔧 Utility functions
-def extract_text_from_pdf(path):
+def detect_dept_from_text(text):
+    departments = ['CSE', 'ECE', 'IT', 'MCA', 'MAE', 'AIDS', 'VLSI', 'BBA', 'MBA']
+    for dept in departments:
+        if dept in text.upper():
+            return dept
+    return "General"
+
+def detect_batch_from_text(text):
+    text = text.replace("–", "-").lower()
+    patterns = [
+        r'\b20\d{2}-20\d{2}\b',
+        r'\bclass of (\d{4})\b',
+        r'\bfor the year (\d{4})\b',
+        r'\b(\d{4}) batch\b',
+        r'\bgraduating batch of (\d{4})\b',
+        r'\b(\d{4})\b'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(0) if len(match.groups()) == 0 else match.group(1)
+    return "Unknown"
+
+def auto_extract_filters_from_query(query):
+    year_match = re.search(r'20\d{2}', query)
+    year = year_match.group(0) if year_match else "All"
+
+    departments = ['CSE', 'ECE', 'IT', 'MCA', 'MAE', 'AIDS', 'VLSI', 'BBA', 'MBA']
+    dept = "All"
+    for d in departments:
+        if d in query.upper():
+            dept = d
+            break
+
+    return year, dept
+
+# ✅ Load PDFs & build FAISS index
+def build_index_from_pdfs(pdf_folder_path="./Placement Data"):
+    global all_chunks, metadata_list, faiss_index
+
+    if not os.path.exists(pdf_folder_path):
+        print(f"❌ Error: Folder not found: {pdf_folder_path}")
+        exit()
+
+    pdf_files = [f for f in os.listdir(pdf_folder_path) if f.endswith(".pdf")]
+
+    if not pdf_files:
+        print(f"⚠️ No PDFs found in {pdf_folder_path}")
+        exit()
+
+    for filename in pdf_files:
+        file_path = os.path.join(pdf_folder_path, filename)
+        print(f"📄 Loading: {filename}")
+        year = extract_year_from_filename(filename)
+
+        try:
+            chunks = extract_text_chunks(file_path)
+        except Exception as e:
+            print(f"Error reading {filename}: {e}")
+            continue
+
+        for chunk in chunks:
+            dept = detect_dept_from_text(chunk)
+            batch = detect_batch_from_text(chunk)
+            all_chunks.append(chunk)
+            metadata_list.append({
+                "text": chunk,
+                "source": filename,
+                "year": year,
+                "dept": dept,
+                "batch": batch
+            })
+
+    if not all_chunks:
+        print("❌ No text extracted. Exiting.")
+        exit()
+
+    embeddings = model.encode(all_chunks)
+    faiss_index = faiss.IndexFlatL2(embeddings.shape[1])
+    faiss_index.add(np.array(embeddings))
+
+# ✅ Search relevant chunks
+def get_top_chunks(query, year_filter=None, dept_filter=None, k=10):
+    query_embedding = model.encode([query])
+    D, I = faiss_index.search(np.array(query_embedding), k)
+
+    results = []
+    for idx in I[0]:
+        if 0 <= idx < len(metadata_list):
+            meta = metadata_list[idx]
+            if (year_filter in [None, "All", meta["year"]]) and (dept_filter in [None, "All", meta["dept"]]):
+                results.append(meta)
+        else:
+            print(f"⚠️ Invalid index {idx} from FAISS.")
+    return results
+
+# ✅ Gemini answer generation
+def get_gemini_answer(query, retrieved_chunks):
+    if not retrieved_chunks:
+        return "⚠️ Could not find relevant information to answer your question."
+
+    context = "\n".join([chunk["text"] for chunk in retrieved_chunks])
+    prompt = f"""
+You are a placement assistant bot. Based on the placement data provided in the context, answer the user's question accurately and concisely.
+If the context does not contain enough information, say you cannot answer based on the data.
+
+Context:
+{context}
+
+User Question: {query}
+Answer:
+"""
     try:
-        doc = fitz.open(path)
-        return "\n".join([page.get_text() for page in doc])
-    except Exception as e:
-        st.error(f"Error reading PDF: {e}")
-        return ""
-
-def split_text_into_chunks(text, chunk_size=300):
-    words = text.split()
-    return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
-
-def rag_qa(query, chunks, index):
-    try:
-        query_embedding = embedder.encode([query])
-        distances, indices = index.search(np.array(query_embedding), 3)
-        context = "\n".join([chunks[i] for i in indices[0]])
-        prompt = f"Use the following context to answer:\n\n{context}\n\nQuestion: {query}\nAnswer:"
         response = gemini_model.generate_content(prompt)
         return response.text
     except Exception as e:
-        st.error("❌ Error generating answer")
-        st.text(traceback.format_exc())
-        return None
+        print(f"❌ Gemini error: {e}")
+        return "❌ An error occurred while generating the answer."
 
-# 📄 Process PDF
-if uploaded_file and st.session_state.chunks is None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded_file.getbuffer())
-        tmp_path = tmp.name
+# ✅ Command line interaction
+def main():
+    print("\n🟢 You can now ask placement-related questions (type 'exit' to stop)\n")
+    while True:
+        try:
+            query = input("💬 Your question: ").strip()
+            if query.lower() in ['exit', 'quit', 'stop']:
+                print("👋 Chat ended.")
+                break
 
-    with st.spinner("📖 Reading and embedding the PDF..."):
-        text = extract_text_from_pdf(tmp_path)
-        if text:
-            st.session_state.chunks = split_text_into_chunks(text)
-            try:
-                embeddings = embedder.encode(st.session_state.chunks)
-                index = faiss.IndexFlatL2(embeddings.shape[1])
-                index.add(np.array(embeddings))
-                st.session_state.index = index
-                st.success("✅ PDF processed and ready!")
-            except Exception as e:
-                st.error("❌ Error during embedding/indexing.")
-                st.text(traceback.format_exc())
+            if not query:
+                print("Please enter a question.")
+                continue
 
-# 💬 Chat Interface
-if st.session_state.chunks and st.session_state.index:
-    st.markdown("---")
-    st.subheader("💬 Chat with your PDF")
+            year_filter, dept_filter = auto_extract_filters_from_query(query)
+            print(f"🔎 Filters → Year: {year_filter} | Dept: {dept_filter}")
 
-    # Display previous chat history
-    for i, (q, a) in enumerate(st.session_state.chat_history):
-        st.markdown(f"**You:** {q}")
-        st.markdown(f"**AI:** {a}")
-        st.markdown("---")
+            top_chunks = get_top_chunks(query, year_filter=year_filter, dept_filter=dept_filter, k=20)
 
-    # Input for new question
-    new_question = st.text_input("Ask a new question (type 'exit' to end):", key="user_input")
+            if not top_chunks:
+                print("⚠️ No relevant data found.")
+                continue
 
-    if new_question:
-        if new_question.lower() == "exit":
-            st.markdown("👋 Conversation ended. Thanks for chatting!")
-        else:
-            with st.spinner("💭 Thinking..."):
-                answer = rag_qa(new_question, st.session_state.chunks, st.session_state.index)
-                if answer:
-                    st.session_state.chat_history.append((new_question, answer))
-                    st.experimental_rerun()
+            answer = get_gemini_answer(query, top_chunks)
+            print("\n🔹 Answer:\n", answer)
+            print("\n📄 Sources:")
+            for i, chunk in enumerate(top_chunks[:min(len(top_chunks), 5)]):
+                print(f"- Source {i+1}: {chunk.get('source', 'N/A')} | Year: {chunk.get('year', 'N/A')} | Dept: {chunk.get('dept', 'N/A')} | Batch: {chunk.get('batch', 'N/A')}")
+            if len(top_chunks) > 5:
+                print(f"... and {len(top_chunks) - 5} more result(s).")
+            print("\n----------------------------------------\n")
+
+        except EOFError:
+            print("\n👋 Chat ended (Input closed).")
+            break
+        except Exception as e:
+            print(f"⚠️ Unexpected error: {e}")
+
+# ✅ Load index and optionally run CLI
+if __name__ == "__main__":
+    build_index_from_pdfs()
+    main()
