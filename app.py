@@ -1,5 +1,3 @@
-# app.py
-
 import os
 import re
 import fitz  # PyMuPDF
@@ -24,15 +22,11 @@ except KeyError:
 
 gemini_model = genai.GenerativeModel('models/gemini-2.5-flash')
 
-# ✅ Ensure NLTK punkt tokenizer is available in all environments
-import nltk
-import os
-
+# ✅ Ensure NLTK punkt tokenizer is available
 NLTK_DATA_PATH = "/tmp/nltk_data"
 os.makedirs(NLTK_DATA_PATH, exist_ok=True)
 nltk.download('punkt', download_dir=NLTK_DATA_PATH)
 nltk.data.path.append(NLTK_DATA_PATH)
-
 
 # ✅ Global variables
 model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -153,6 +147,10 @@ def retrieve_chunks(query, index, chunks, embeddings, top_k=20):
     valid = [i for i in I[0] if i != -1 and i < len(chunks)]
     return "\n".join([chunks[i] for i in valid])
 
+# ✅ Alias for compatibility (to fix `get_top_chunks` error)
+def get_top_chunks(query, index, chunks, embeddings, top_k=20):
+    return retrieve_chunks(query, index, chunks, embeddings, top_k)
+
 # ✅ Ask Gemini
 def ask_gemini(question, context):
     if not context.strip():
@@ -229,7 +227,6 @@ def auto_extract_filters_from_query(query):
 
     return year, dept
 
-
-# ✅ Local script execution (for CLI testing)
+# ✅ Local script execution
 if __name__ == "__main__":
     build_and_run("./Placement Data")
