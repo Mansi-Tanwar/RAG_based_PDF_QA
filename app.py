@@ -33,7 +33,7 @@ def embed_text(texts):
         texts = [texts]
     if not texts or all(not t.strip() for t in texts):
         return np.array([])
-    )
+
     embeddings = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
     return np.array(embeddings)
 
