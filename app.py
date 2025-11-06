@@ -33,15 +33,8 @@ def embed_text(texts):
         texts = [texts]
     if not texts or all(not t.strip() for t in texts):
         return np.array([])
-    responses = genai.embed_content(
-        model="models/embedding-001",
-        content=texts,
-        task_type="retrieval_document",
-        title="PlacementQA"
     )
-    embeddings = responses["embedding"]
-    if isinstance(embeddings[0], float):
-        embeddings = [embeddings]
+    embeddings = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
     return np.array(embeddings)
 
 def extract_chunks_from_pdf(pdf_path, year, max_tokens=200):
